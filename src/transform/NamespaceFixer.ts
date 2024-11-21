@@ -37,7 +37,7 @@ export class NamespaceFixer {
 
   findNamespaces() {
     const namespaces: Array<Namespace> = [];
-    const items: { [key: string]: Item } = {};
+    const items: { [key: string]: Item[] } = {};
 
     for (const node of this.sourceFile.statements) {
       const location = {
@@ -114,19 +114,22 @@ export class NamespaceFixer {
       }
 
       if (ts.isClassDeclaration(node)) {
-        items[node.name!.getText()] = { type: "class", generics: node.typeParameters };
+        items[node.name!.getText()] = [{ type: "class", generics: node.typeParameters }];
       } else if (ts.isFunctionDeclaration(node)) {
         // a function has generics, but these don’t need to be specified explicitly,
         // since functions are treated as values.
-        items[node.name!.getText()] = { type: "function" };
+        items[node.name!.getText()] = [{ type: "function" }];
       } else if (ts.isInterfaceDeclaration(node)) {
-        items[node.name.getText()] = { type: "interface", generics: node.typeParameters };
+        items[node.name.getText()] = [
+          ...(items[node.name.getText()] ?? []),
+          { type: "interface", generics: node.typeParameters }
+        ];
       } else if (ts.isTypeAliasDeclaration(node)) {
-        items[node.name.getText()] = { type: "type", generics: node.typeParameters };
+        items[node.name.getText()] = [{ type: "type", generics: node.typeParameters }];
       } else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
-        items[node.name.getText()] = { type: "namespace" };
+        items[node.name.getText()] = [{ type: "namespace" }];
       } else if (ts.isEnumDeclaration(node)) {
-        items[node.name.getText()] = { type: "enum" };
+        items[node.name.getText()] = [{ type: "enum" }];
       }
       if (!ts.isVariableStatement(node)) {
         continue;
@@ -138,7 +141,10 @@ export class NamespaceFixer {
       const decl = declarations[0]!;
       const name = decl.name.getText();
       if (!decl.initializer || !ts.isCallExpression(decl.initializer)) {
-        items[name] = { type: "var" };
+        items[name] = [
+          ...(items[name] ?? []),
+          { type: "var" }
+        ];
         continue;
       }
       const obj = decl.initializer.arguments[0]!;
@@ -187,19 +193,22 @@ export class NamespaceFixer {
 
       for (const { exportedName, localName } of ns.exports) {
         if (exportedName === localName) {
-          const { type, generics } = itemTypes[localName] || {};
-          if (type === "interface" || type === "type") {
-            // an interface is just a type
-            const typeParams = renderTypeParams(generics);
-            code += `type ${ns.name}_${exportedName}${typeParams.in} = ${localName}${typeParams.out};\n`;
-          } else if (type === "enum" || type === "class") {
-            // enums and classes are both types and values
-            const typeParams = renderTypeParams(generics);
-            code += `type ${ns.name}_${exportedName}${typeParams.in} = ${localName}${typeParams.out};\n`;
-            code += `declare const ${ns.name}_${exportedName}: typeof ${localName};\n`;
-          } else {
-            // functions and vars are just values
-            code += `declare const ${ns.name}_${exportedName}: typeof ${localName};\n`;
+          const candidates = itemTypes[localName] ?? []
+          for (const candidate of candidates) {
+            const { type, generics } = candidate;
+            if (type === "interface" || type === "type") {
+              // an interface is just a type
+              const typeParams = renderTypeParams(generics);
+              code += `type ${ns.name}_${exportedName}${typeParams.in} = ${localName}${typeParams.out};\n`;
+            } else if (type === "enum" || type === "class") {
+              // enums and classes are both types and values
+              const typeParams = renderTypeParams(generics);
+              code += `type ${ns.name}_${exportedName}${typeParams.in} = ${localName}${typeParams.out};\n`;
+              code += `declare const ${ns.name}_${exportedName}: typeof ${localName};\n`;
+            } else {
+              // functions and vars are just values
+              code += `declare const ${ns.name}_${exportedName}: typeof ${localName};\n`;
+            }
           }
         }
       }
